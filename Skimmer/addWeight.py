@@ -109,7 +109,7 @@ def processFile(filename, verbose=False):
 
     #newTree = tree.CloneTree(0)
 
-    newFile = ROOT.TFile(filename.split('TT')[1].split('.root')[0]+'withWeights.root','recreate')
+    newFile = ROOT.TFile(filename.split('.root')[0]+'withWeights.root','recreate')
     newFile.cd()
     newtree = tree.Clone()
 
