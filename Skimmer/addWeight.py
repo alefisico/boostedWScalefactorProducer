@@ -16,12 +16,18 @@ parser.add_argument('-f', '--filter', action='store', type=str, dest='filter', d
 parser.add_argument('-k', '--exclude', action='store', type=list, dest='excluded', default=["SingleMuon", "EGamma"], help="Provide here a list of patterns which, if contained in a sample name, will lead to this sample being ignored. ")
 parser.add_argument('--singlethread', action='store_true', dest='singlecore', default=False, help="Run single threaded (use for debugging)")
 parser.add_argument('-v', '--verbose', action='store_true', dest='verbose', default=False, help="More information print out (for the sequence to make sense, you may want to use option '--singlethread' as well).")
+parser.add_argument('-y', '--year', dest="year", type=int, help="The year for which you want to create the workspace. ")
+
 
 args = parser.parse_args()
 
-filterset   = args.filter #TODO: remove 
+filterset   = args.filter #TODO: remove
 
 ##############################
+
+integratedLumi = {
+    2017 : 43.024,
+}
 
 def processFile(filename, verbose=False):
     sample = os.path.basename(filename).replace(".root", "")
@@ -32,17 +38,17 @@ def processFile(filename, verbose=False):
         isMC = False
     print(isMC) #TODO: remove
 
-    
+
     #filename = args.directory + '/' + sample + '.root'
-    
-    file = ROOT.TFile(filename, 'UPDATE')
-    file.cd()
+
+    FILE = ROOT.TFile(filename)   #### file is a bad name in python, it is a keyword.
+    FILE.cd()
 
     weight = 1.
 
     if isMC:
         # number of events
-        rundata = file.Get('Runs')
+        rundata = FILE.Get('Runs')
 
         genH = ROOT.TH1D("genH_%s" % sample, "", 1, 0, 0)
         genH.Sumw2()
@@ -50,11 +56,11 @@ def processFile(filename, verbose=False):
         rundata.Draw("genEventCount_>>genH_%s" % sample, "", "goff")
         genEv = genH.GetMean()*genH.GetEntries()
         print(genEv)
-        
+
         # Cross section
         #XS = getXsec(sample)
         #SF = getSF(sample)
-        
+
         #Leq = LUMI*XS/genEv if genEv > 0 else 0.
         #print(Leq)
 
@@ -68,15 +74,19 @@ def processFile(filename, verbose=False):
         while (not key in lumidict.keys()): # Assumes the key in the dict is a truncated name of the file
             number-=1
             key = "_".join(parts[0:number])
-            if (number == 0): 
-                print("ERROR: Sample '{}'' not found in dictionary, not setting lumiWeight.".format(sample))
+            if (number == 0):
+                print("ERROR: Sample '{}' not found in dictionary, not setting lumiWeight.".format(sample))
                 return
 
         print("Sample: {}, key: {}".format(sample, key))
         crosssection = lumidict[key][0]
         numevents = lumidict[key][1]
 
-        weight = float(crosssection)*1000./float(numevents)
+        if not (args.year in integratedLumi.keys()):
+            print("ERROR: Invalid year: {}, please specify a year from {}.\nNot setting weight.".format(args.year, integratedLumi.keys()))
+            return
+
+        weight = (float(crosssection)*1000./float(numevents))*integratedLumi[args.year]
 
         if (verbose) : print("Cross section: {}, number of events: {}, weight: {}".format(crosssection, numevents, weight))
 
@@ -84,36 +94,49 @@ def processFile(filename, verbose=False):
 
 
     #else: Leq = 1.
-    
+
     print(sample, ": lumiWeight =", weight)
-    
+
     # Variables declaration
-    lumiWeight = array('f', [1.0])  # global event weight with lumi
-    
+    ####lumiWeight = array('f', [1.0]) #np.ones((1), dtype="float32")  # global event weight with lumi   #### lumiWeight is already in your input
+    totalWeight = array('f', [1.0]) #np.ones((1), dtype='float32')
+    #eventWeight = np.empty((1), dtype='float32')
+
     # Looping over file content
     # Tree
-    tree = file.Get('Events')
+    tree = FILE.Get('Events')
     nev = tree.GetEntriesFast()
-    
+
+    #newTree = tree.CloneTree(0)
+
+    newFile = ROOT.TFile(filename.split('TT')[1].split('.root')[0]+'withWeights.root','recreate')
+    newFile.cd()
+    newtree = tree.Clone()
+
     # New branches
-    branch = tree.Branch('lumiWeight', lumiWeight, 'lumiWeight/F')
+    ####newtree.Branch('lumiWeight', lumiWeight, 'lumiWeight/F')
+    newtree.Branch('weight', totalWeight, 'weight/F')
+    #tree.SetBranchAddress("eventWeight", eventWeight, "eventWeight/F")
 
     # looping over events
     for event in range(0, tree.GetEntries()):
-        if verbose and (event%10000==0 or event==nev-1): 
+        if event>10000: continue
+        if verbose and (event%10000==0 or event==nev-1):
             print(' = TTree:', tree.GetName(), 'events:', nev, '\t', int(100*float(event+1)/float(nev)), '%\r')
-        
+
         tree.GetEntry(event)
 
-        
-        lumiWeight[0] = weight 
-            
-        # Fill the branches
-        branch.Fill()
+        #lumiWeight[0] = weight
+        totalWeight[0] = tree.eventWeight*weight
 
-    tree.Write("", ROOT.TObject.kOverwrite)
-        
-    file.Close() 
+        #if (verbose): print("Total weight: {}".format(tree.eventWeight*weight))
+        if (verbose and event == 0): print("Total weight: {}".format(tree.eventWeight*weight))
+
+        # Fill the branches
+        newtree.Fill()
+
+    newFile.Write()
+    newFile.Close()
 
 
 
@@ -122,21 +145,22 @@ if not os.path.exists(args.directory):
     exit()
 
 jobs = []
-if (os.path.isfile(args.directory)): 
+if (os.path.isfile(args.directory)):
     processFile(args.directory, args.verbose)
-else: 
+else:
     for d in os.listdir(args.directory):
+        filename = args.directory+'/'+d
         if not '.root' in d: continue
         if len(filterset)>0 and not filterset in d: continue
-        
+
         if args.singlecore:
             print(" -", d)
-            processFile(args.directory+'/'+d, args.verbose)
+            processFile(filename, args.verbose)
         else:
-            p = multiprocessing.Process(target=processFile, args=(d,args.verbose,))
+            p = multiprocessing.Process(target=processFile, args=(filename,args.verbose,))
             jobs.append(p)
             p.start()
         #exit()
-    
+
 print('\nDone.')
 
