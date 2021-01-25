@@ -107,20 +107,19 @@ def processFile(filename, verbose=False):
     tree = FILE.Get('Events')
     nev = tree.GetEntriesFast()
 
-    #newTree = tree.CloneTree(0)
-
-    newFile = ROOT.TFile(filename.split('.root')[0]+'withWeights.root','recreate')
+    #newFile = ROOT.TFile(filename.split('/')[-1].split('.root')[0]+'withWeights.root','recreate')  ### just a test
+    newFile = ROOT.TFile(filenamesplit('.root')[0]+'withWeights.root','recreate')
     newFile.cd()
-    newtree = tree.Clone()
+    newtree = tree.CloneTree(0)
 
     # New branches
     ####newtree.Branch('lumiWeight', lumiWeight, 'lumiWeight/F')
-    newtree.Branch('weight', totalWeight, 'weight/F')
+    tmp = newtree.Branch('weight', totalWeight, 'weight/F')
     #tree.SetBranchAddress("eventWeight", eventWeight, "eventWeight/F")
 
     # looping over events
     for event in range(0, tree.GetEntries()):
-        if event>10000: continue
+        #if event>20000: continue
         if verbose and (event%10000==0 or event==nev-1):
             print(' = TTree:', tree.GetName(), 'events:', nev, '\t', int(100*float(event+1)/float(nev)), '%\r')
 
